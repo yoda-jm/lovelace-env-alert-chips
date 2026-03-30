@@ -1,0 +1,14 @@
+{
+  "name": "lovelace-env-alert-chips",
+  "version": "1.0.0",
+  "description": "Météo-France vigilance alerts rendered as mushroom chips for Home Assistant",
+  "scripts": {
+    "build": "rollup -c rollup.config.mjs",
+    "watch": "rollup -c rollup.config.mjs --watch",
+    "dev": "rollup -c rollup.config.mjs --watch"
+  },
+  "devDependencies": {
+    "@rollup/plugin-terser": "^0.4.4",
+    "rollup": "^4.0.0"
+  }
+}

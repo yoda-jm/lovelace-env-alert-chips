@@ -1,0 +1,5 @@
+{
+  "name": "Weather Alert Chips Card",
+  "filename": "lovelace-env-alert-chips.js",
+  "homeassistant": "2023.9.0"
+}
