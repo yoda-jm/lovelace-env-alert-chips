@@ -1,3 +1,5 @@
+import { extractTooltips, applyChipTooltips } from './chip-tooltips.js';
+
 /**
  * atmo-alert-chips-card
  *
@@ -25,21 +27,21 @@
 
 // ── Entity-id → icon maps ──────────────────────────────────────────────────────
 
-// Pollen type key extracted from sensor.niveau_<TYPE>_<zone> → icon name
-const POLLEN_TYPE_TO_ICON = {
-  ambroisie: 'ragweed',
-  armoise:   'mugwort',
-  aulne:     'alder',
-  bouleau:   'birch',
-  gramine:   'grass',
-  graminee:  'grass',
-  cypres:    'cypress',
-  frene:     'ash',
-  noisetier: 'hazel',
-  olivier:   'olive',
-  platane:   'plane',
-  plantain:  'plantain',
-};
+// Pollen type (prefix of the <TYPE> part of sensor.niveau_<TYPE>_<zone>) → icon + label.
+// Prefix matching tolerates naming variants (gramine / graminee / graminees, …).
+const POLLEN_TYPES = [
+  { prefix: 'ambroisie', icon: 'ragweed',  label: 'Ambroisie' },
+  { prefix: 'armoise',   icon: 'mugwort',  label: 'Armoise'   },
+  { prefix: 'aulne',     icon: 'alder',    label: 'Aulne'     },
+  { prefix: 'bouleau',   icon: 'birch',    label: 'Bouleau'   },
+  { prefix: 'gramin',    icon: 'grass',    label: 'Graminées' },
+  { prefix: 'cypres',    icon: 'cypress',  label: 'Cyprès'    },
+  { prefix: 'frene',     icon: 'ash',      label: 'Frêne'     },
+  { prefix: 'noisetier', icon: 'hazel',    label: 'Noisetier' },
+  { prefix: 'olivier',   icon: 'olive',    label: 'Olivier'   },
+  { prefix: 'platane',   icon: 'plane',    label: 'Platane'   },
+  { prefix: 'plantain',  icon: 'plantain', label: 'Plantain'  },
+];
 
 // AQ pollutant name (start of entity_id after sensor.) → icon name
 const AQ_ID_TO_ICON = {
@@ -59,50 +61,58 @@ const AQ_ID_LABELS = {
   pm10:              'PM10',
 };
 
-// Pollen type key → display label
-const POLLEN_TYPE_LABELS = {
-  ambroisie: 'Ambroisie',
-  armoise:   'Armoise',
-  aulne:     'Aulne',
-  bouleau:   'Bouleau',
-  gramine:   'Graminées',
-  graminee:  'Graminées',
-  cypres:    'Cyprès',
-  frene:     'Frêne',
-  noisetier: 'Noisetier',
-  olivier:   'Olivier',
-  platane:   'Platane',
-  plantain:  'Plantain',
-};
+const _deaccent = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
+// sensor.niveau_graminees_mulhouse_j_1 → 'graminees_mulhouse'
 function _pollenTypeFromId(id) {
-  const m = id.match(/\.(?:niveau|concentration)_([a-z]+)/);
+  const m = _deaccent(id).replace(/_j_1$/, '').match(/[._](?:niveau|concentration)_([a-z0-9_]+)$/);
   return m?.[1] ?? '';
 }
 
+function _pollenTypeInfo(id) {
+  const rest = _pollenTypeFromId(id);
+  return POLLEN_TYPES.find((t) => rest.startsWith(t.prefix)) ?? null;
+}
+
 function _pollenIconFromId(id) {
-  const key = POLLEN_TYPE_TO_ICON[_pollenTypeFromId(id)];
-  return key ? `pollen:${key}` : 'pollen:grass';
+  const info = _pollenTypeInfo(id);
+  return info ? `pollen:${info.icon}` : 'pollen:grass';
 }
 
 function _pollenLabelFromId(id) {
-  return POLLEN_TYPE_LABELS[_pollenTypeFromId(id)] ?? null;
+  return _pollenTypeInfo(id)?.label ?? null;
+}
+
+// Grouping key so niveau_X and concentration_X pair up.
+function _pollenGroupKey(id) {
+  return _pollenTypeInfo(id)?.prefix ?? _pollenTypeFromId(id).split('_')[0];
+}
+
+// Pollutant fragment found anywhere in the entity id, as a whole _-separated
+// token sequence (ids may be prefixed, e.g. sensor.atmo_france_ozone_<zone>).
+function _aqFragFromId(id) {
+  const name = '_' + id.replace(/^sensor\./, '').replace(/_j_1$/, '') + '_';
+  return Object.keys(AQ_ID_TO_ICON).find((frag) => name.includes(`_${frag}_`)) ?? null;
 }
 
 function _aqIconFromId(id) {
-  const name = id.replace(/^sensor\./, '').replace(/_j_1$/, '');
-  for (const [frag, key] of Object.entries(AQ_ID_TO_ICON)) {
-    if (name.startsWith(frag + '_') || name === frag) return `pollen:${key}`;
-  }
-  return 'pollen:air_quality';
+  const frag = _aqFragFromId(id);
+  return frag ? `pollen:${AQ_ID_TO_ICON[frag]}` : 'pollen:air_quality';
 }
 
 function _aqLabelFromId(id) {
-  const name = id.replace(/^sensor\./, '').replace(/_j_1$/, '');
-  for (const [frag, label] of Object.entries(AQ_ID_LABELS)) {
-    if (name.startsWith(frag + '_') || name === frag) return label;
-  }
-  return null;
+  const frag = _aqFragFromId(id);
+  return frag ? AQ_ID_LABELS[frag] : null;
+}
+
+// ── Tooltips ───────────────────────────────────────────────────────────────────
+
+function _tooltipFn(entity, name, day) {
+  return (hass) => {
+    const st  = hass?.states?.[entity];
+    const lvl = st?.attributes?.['Libellé'] || st?.state || 'inconnu';
+    return `${name}${day === 'tomorrow' ? ' (demain)' : ''} : ${lvl}`;
+  };
 }
 
 // ── Chip builders ─────────────────────────────────────────────────────────────
@@ -152,7 +162,7 @@ function _chipBadgeStyle(entity, { showLevel = false, setV = '', bgExpr = '', sh
   return parts.join('\n');
 }
 
-function buildAirQualityChip(entity, { showBadge = false, showConcentration = false, label = null, icon = 'pollen:air_quality' } = {}) {
+function buildAirQualityChip(entity, { showBadge = false, showConcentration = false, label = null, icon = 'pollen:air_quality', day = null } = {}) {
   const setV = `{% set v = states('${entity}') | int(0) %}`;
   const pre  = `${setV}{% set lbl = state_attr('${entity}', 'Libellé') | default('') %}`;
   // Detail chips: show "TypeName (LevelLabel)", global chip: show just level label
@@ -163,6 +173,7 @@ function buildAirQualityChip(entity, { showBadge = false, showConcentration = fa
     content:    `${pre} {% if v >= 2 %}${contentLabel}{% endif %}`,
     icon_color: `${setV} {% if v == 1 %}green{% elif v == 2 %}yellow{% elif v == 3 %}orange{% elif v == 4 %}red{% elif v == 5 %}purple{% elif v >= 6 %}darkred{% else %}grey{% endif %}`,
     tap_action: { action: 'more-info' },
+    _tooltip: _tooltipFn(entity, label ?? "Qualité de l'air", day),
   };
   if (showBadge || showConcentration) {
     chip.card_mod = { style: _chipBadgeStyle(entity, { showLevel: showBadge, setV, bgExpr: AQ_BADGE_BG, showConcentration }) };
@@ -170,7 +181,7 @@ function buildAirQualityChip(entity, { showBadge = false, showConcentration = fa
   return chip;
 }
 
-function buildPollenChip(entity, { showBadge = false, showConcentration = false, label = null, icon = 'pollen:grass', concEntity = null } = {}) {
+function buildPollenChip(entity, { showBadge = false, showConcentration = false, label = null, icon = 'pollen:grass', concEntity = null, day = null } = {}) {
   const setV = `{% set v = states('${entity}') | int(-1) %}`;
   const pre  = `${setV}{% set lbl = state_attr('${entity}', 'Libellé') | default('') %}`;
   // Detail chips: show "TypeName (LevelLabel)", global chip: show just level label
@@ -181,6 +192,7 @@ function buildPollenChip(entity, { showBadge = false, showConcentration = false,
     content:    `${pre} {% if v >= 2 and v <= 5 %}${contentLabel}{% endif %}`,
     icon_color: `${setV} {% if v == 1 %}green{% elif v == 2 %}yellow{% elif v == 3 %}orange{% elif v == 4 %}red{% elif v == 5 %}purple{% else %}grey{% endif %}`,
     tap_action: { action: 'more-info' },
+    _tooltip: _tooltipFn(entity, label ?? 'Pollens', day),
   };
   // Concentration badge is only meaningful when a separate concentration entity is provided.
   const hasConc = showConcentration && !!concEntity;
@@ -207,7 +219,7 @@ function buildAtmoCardConfig(config, resolved, dateKey, mode) {
   const polDetail = showDetail ? (resolved[`pol_detail_${dateKey}`] ?? []) : [];
 
   const chips  = [];
-  const baseOpts = { showBadge: show_level_badge, showConcentration: show_concentration };
+  const baseOpts = { showBadge: show_level_badge, showConcentration: show_concentration, day: dateKey };
 
   if (mode === 'air_quality' || mode === 'both') {
     if (showGlobal && aqEntity && _shouldShowAq(hass, aqEntity, hide_unavailable, hide_good)) {
@@ -282,9 +294,9 @@ function resolveAtmoEntitiesFromDevice(hass, deviceId) {
   // Classification by entity_id pattern + device_class attribute
   const isGlobalAq      = (id) => id.includes('qualite_globale') && !id.includes('pollen');
   const isGlobalPol     = (id) => id.includes('qualite_globale') && id.includes('pollen');
-  const isDetailAqLvl   = (id) => hass.states[id]?.attributes?.device_class === 'aqi' && !/\.niveau_/.test(id);
-  const isDetailPolLvl  = (id) => /\.niveau_/.test(id);
-  const isDetailPolConc = (id) => /\.concentration_/.test(id);
+  const isDetailAqLvl   = (id) => hass.states[id]?.attributes?.device_class === 'aqi' && !/[._]niveau_/.test(id);
+  const isDetailPolLvl  = (id) => /[._]niveau_/.test(id);
+  const isDetailPolConc = (id) => /[._]concentration_/.test(id);
 
   const findGlobal = (check, tomorrow) =>
     sensorIds.find((id) => check(id) && isTomorrow(id) === tomorrow) ?? null;
@@ -303,7 +315,8 @@ function resolveAtmoEntitiesFromDevice(hass, deviceId) {
     const byType = {};
     for (const id of sensorIds) {
       if (isTomorrow(id) !== tomorrow) continue;
-      const type = _pollenTypeFromId(id);
+      if (!isDetailPolLvl(id) && !isDetailPolConc(id)) continue;
+      const type = _pollenGroupKey(id);
       if (!type) continue;
       if (!byType[type]) byType[type] = { level: null, conc: null };
       if (isDetailPolLvl(id))  byType[type].level = id;
@@ -467,7 +480,8 @@ class AtmoAlertChipsCard extends HTMLElement {
 
   _rebuildSlot(slot, dk, rowMode) {
     const resolved   = this._resolveEntities();
-    const cardConfig = buildAtmoCardConfig({ ...this._config, _hass: this._hass }, resolved, dk, rowMode);
+    const { config: cardConfig, tooltips } = extractTooltips(
+      buildAtmoCardConfig({ ...this._config, _hass: this._hass }, resolved, dk, rowMode));
     const container  = this.shadowRoot.getElementById(`inner-${slot}`);
     if (!container) return;
     container.hidden = false;
@@ -481,6 +495,7 @@ class AtmoAlertChipsCard extends HTMLElement {
       this._innerCards[slot].setConfig(cardConfig);
     }
     if (this._hass) this._innerCards[slot].hass = this._hass;
+    applyChipTooltips(this._innerCards[slot], tooltips, this._hass);
   }
 
   _clearSlot(slot) {

@@ -21,6 +21,10 @@
  *       badge_on_unknown: true
  */
 
+import { extractTooltips, applyChipTooltips } from './chip-tooltips.js';
+
+const WEATHER_LEVEL_LABELS = { vert: 'vert', jaune: 'jaune', orange: 'orange', rouge: 'rouge' };
+
 // ── Providers ──────────────────────────────────────────────────────────────────
 
 const PROVIDERS = [
@@ -54,6 +58,10 @@ function buildChipConfig(entity, alert) {
     content:    `${setV} {% if v in ['jaune', 'orange', 'rouge'] %}${type}{% endif %}`,
     icon_color: `${setV} {% if v == 'vert' %}green{% elif v == 'jaune' %}yellow{% elif v == 'orange' %}orange{% elif v == 'rouge' %}red{% else %}grey{% endif %}`,
     tap_action: { action: 'more-info' },
+    _tooltip: (hass) => {
+      const v = String(hass?.states?.[entity]?.attributes?.[type] ?? '').toLowerCase();
+      return `${type} : ${WEATHER_LEVEL_LABELS[v] ? `vigilance ${v}` : 'inconnu'}`;
+    },
     // ? badge whenever the state is not a recognised level (unknown / missing attribute).
     card_mod: { style: `
 :host { position: relative; border-radius: 12px; padding: 2px; display: inline-block; }
@@ -151,6 +159,9 @@ class WeatherAlertChipsCard extends HTMLElement {
 
     if (this._innerCard) {
       this._innerCard.hass = hass;
+      if (prevEntityState !== hass.states?.[this._config?.entity]) {
+        applyChipTooltips(this._innerCard, this._tooltips, hass);
+      }
       // Rebuild when JS filtering is active and the entity state changed,
       // OR when this is the first time hass arrives (prev was null) — the
       // inner card may have been built without hass in that case.
@@ -165,7 +176,8 @@ class WeatherAlertChipsCard extends HTMLElement {
   }
 
   _rebuildCard() {
-    const cardConfig = buildCardConfig(this._config, this._hass);
+    const { config: cardConfig, tooltips } = extractTooltips(buildCardConfig(this._config, this._hass));
+    this._tooltips = tooltips;
     if (!this._innerCard) {
       const card = document.createElement('mushroom-chips-card');
       card.setConfig(cardConfig);
@@ -175,6 +187,7 @@ class WeatherAlertChipsCard extends HTMLElement {
       this._innerCard.setConfig(cardConfig);
     }
     if (this._hass) this._innerCard.hass = this._hass;
+    applyChipTooltips(this._innerCard, this._tooltips, this._hass);
   }
 
   getCardSize() {
